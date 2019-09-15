@@ -1,0 +1,27 @@
+[package]
+name = "example"
+version = "0.1.0"
+edition = "2018"
+authors = ["ronanyeah"]
+repository = "https://github.com/ronanyeah/rust-hasura"
+readme = "README.md"
+keywords = ["rust"]
+categories = ["rust"]
+
+[dependencies]
+juniper = "0.13.1"
+mount = "0.4.0"
+iron = "0.6.1"
+iron-cors = "0.8.0"
+juniper_iron = "0.5.1"
+graphql_client = "0.8.0"
+serde = "1.0.100"
+serde_json = "1.0.40"
+uuid_foo = { package = "uuid", version = "0.7.4", features = ["serde"] }
+jsonwebtoken = "6.0.1"
+bcrypt = "0.5.0"
+reqwest = "0.9.20"
+
+[[bin]]
+name = "example"
+path = "src/main.rs"

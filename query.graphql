@@ -1,0 +1,14 @@
+query UserGet($email: String!) {
+  user(where: { _and: [{ email: { _eq: $email } }] }) {
+    id
+    password
+  }
+}
+
+mutation UserCreate($email: String!, $password: String!) {
+  insert_user(objects: { password: $password, email: $email }) {
+    returning {
+      id
+    }
+  }
+}
