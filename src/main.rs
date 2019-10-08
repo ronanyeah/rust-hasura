@@ -8,11 +8,11 @@ use std::str::FromStr;
 const BCRYPT_COST: u32 = 10;
 
 #[derive(GraphQLQuery)]
-#[graphql(schema_path = "schema.json", query_path = "query.graphql")]
-pub struct UserGet;
+#[graphql(schema_path = "schema.json", query_path = "user-read.graphql")]
+pub struct UserRead;
 
 #[derive(GraphQLQuery)]
-#[graphql(schema_path = "schema.json", query_path = "query.graphql")]
+#[graphql(schema_path = "schema.json", query_path = "user-create.graphql")]
 pub struct UserCreate;
 
 #[allow(non_camel_case_types)]
@@ -106,12 +106,12 @@ fn make_jwt(context: &Context, user_id: &uuid) -> jsonwebtoken::errors::Result<S
 #[juniper::object(Context = Context)]
 impl Mutation {
     fn login(context: &Context, email: String, password: String) -> FieldResult<Auth> {
-        let variables = user_get::Variables { email };
-        let request_body = UserGet::build_query(variables);
+        let variables = user_read::Variables { email };
+        let request_body = UserRead::build_query(variables);
 
         let mut res = post(&context, &request_body);
 
-        let response_body: Response<user_get::ResponseData> = res.json().unwrap();
+        let response_body: Response<user_read::ResponseData> = res.json().unwrap();
 
         let data = &response_body.data.unwrap();
 

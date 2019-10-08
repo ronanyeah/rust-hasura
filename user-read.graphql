@@ -1,0 +1,6 @@
+query UserRead($email: String!) {
+  user(where: { email: { _eq: $email } }) {
+    id
+    password
+  }
+}
