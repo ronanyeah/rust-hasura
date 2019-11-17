@@ -9,18 +9,18 @@ keywords = ["rust"]
 categories = ["rust"]
 
 [dependencies]
-juniper = "0.13.1"
+juniper = "0.14.1"
 mount = "0.4.0"
 iron = "0.6.1"
 iron-cors = "0.8.0"
-juniper_iron = "0.5.1"
+juniper_iron = "0.6.1"
 graphql_client = "0.8.0"
-serde = "1.0.100"
-serde_json = "1.0.40"
+serde = "1.0.102"
+serde_json = "1.0.41"
 uuid_foo = { package = "uuid", version = "0.7.4", features = ["serde"] }
 jsonwebtoken = "6.0.1"
-bcrypt = "0.5.0"
-reqwest = "0.9.20"
+bcrypt = "0.6.1"
+reqwest = "0.9.22"
 
 [[bin]]
 name = "example"
