@@ -192,15 +192,18 @@ fn main() {
     let port: u16 = std::env::var("PORT")
         .ok()
         .and_then(|p| p.parse().ok())
-        .unwrap();
+        .expect("\"PORT\" is missing!");
 
-    let hasura_endpoint = std::env::var("HASURA_ENDPOINT").unwrap();
-    let hasura_admin_secret = std::env::var("ADMIN_SECRET").unwrap();
+    let hasura_endpoint =
+        std::env::var("HASURA_ENDPOINT").expect("\"HASURA_ENDPOINT\" is missing!");
 
-    let jwt_str = std::env::var("JWT_SECRET").unwrap();
-    let jwt: JwtSecret = serde_json::from_str(&jwt_str).unwrap();
+    let hasura_admin_secret = std::env::var("ADMIN_SECRET").expect("\"ADMIN_SECRET\" is missing!");
 
-    let algo: jsonwebtoken::Algorithm = jsonwebtoken::Algorithm::from_str(&jwt.type_).unwrap();
+    let jwt_str = std::env::var("JWT_SECRET").expect("\"JWT_SECRET\" is missing!");
+    let jwt: JwtSecret = serde_json::from_str(&jwt_str).expect("JWT_SECRET is invalid!");
+
+    let algo: jsonwebtoken::Algorithm =
+        jsonwebtoken::Algorithm::from_str(&jwt.type_).expect("Invalid JWT algorithm!");
 
     let jwt_header = jsonwebtoken::Header::new(algo);
 
