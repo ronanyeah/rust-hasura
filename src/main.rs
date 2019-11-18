@@ -183,6 +183,7 @@ impl Mutation {
 
 #[juniper::object(Context = Context)]
 impl Query {
+    // The  GraphQL spec requires a Query field to be defined.
     fn echo(txt: String) -> FieldResult<String> {
         Ok(txt)
     }
