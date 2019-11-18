@@ -77,7 +77,10 @@ pub struct Mutation;
 
 pub struct Query;
 
-fn post<T: serde::ser::Serialize>(context: &Context, body: T) -> reqwest::Response {
+fn post<T: serde::ser::Serialize>(
+    context: &Context,
+    body: T,
+) -> reqwest::Result<reqwest::Response> {
     let client = reqwest::Client::new();
     client
         .post(&context.hasura_endpoint)
@@ -87,7 +90,6 @@ fn post<T: serde::ser::Serialize>(context: &Context, body: T) -> reqwest::Respon
         )
         .json(&body)
         .send()
-        .unwrap()
 }
 
 fn make_jwt(context: &Context, user_id: &uuid) -> jsonwebtoken::errors::Result<String> {
@@ -109,7 +111,7 @@ impl Mutation {
         let variables = user_read::Variables { email };
         let request_body = UserRead::build_query(variables);
 
-        let mut res = post(&context, &request_body);
+        let mut res = post(&context, &request_body).unwrap();
 
         let response_body: Response<user_read::ResponseData> = res.json().unwrap();
 
@@ -142,7 +144,7 @@ impl Mutation {
         };
         let request_body = UserCreate::build_query(variables);
 
-        let mut res = post(&context, &request_body);
+        let mut res = post(&context, &request_body).unwrap();
 
         let response_body: Response<user_create::ResponseData> = res.json().unwrap();
 
