@@ -1,9 +1,11 @@
+use actix_web::{web, App, Error, HttpResponse, HttpServer};
+use futures::future::TryFutureExt;
 use graphql_client::{GraphQLQuery, Response};
-use iron_cors::CorsMiddleware;
+use juniper::http::GraphQLRequest;
+use juniper::RootNode;
 use juniper::{graphql_value, FieldError, FieldResult};
-use juniper_iron::GraphQLHandler;
-use mount::Mount;
 use std::str::FromStr;
+use std::sync::Arc;
 
 const BCRYPT_COST: u32 = 10;
 
@@ -19,9 +21,11 @@ pub struct UserCreate;
 #[derive(serde::Deserialize, serde::Serialize, Clone, PartialEq)]
 pub struct uuid(uuid_foo::Uuid);
 
+pub type Schema = RootNode<'static, Query, Mutation>;
+
 juniper::graphql_scalar!(uuid where Scalar = <S> {
     resolve(&self) -> juniper::Value {
-        juniper::Value::scalar(self.0.to_string().clone())
+        juniper::Value::scalar(self.0.to_string())
     }
 
     from_input_value(v: &InputValue) -> Option<uuid> {
@@ -47,6 +51,15 @@ pub struct Context {
     hasura_admin_secret: String,
     jwt_key: String,
     jwt_header: jsonwebtoken::Header,
+    client: reqwest::Client,
+}
+
+#[derive(serde::Deserialize)]
+struct Config {
+    port: u16,
+    hasura_endpoint: String,
+    admin_secret: String,
+    jwt_secret: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -81,8 +94,8 @@ fn post<T: serde::ser::Serialize>(
     context: &Context,
     body: T,
 ) -> reqwest::Result<reqwest::Response> {
-    let client = reqwest::Client::new();
-    client
+    context
+        .client
         .post(&context.hasura_endpoint)
         .header(
             "x-hasura-admin-secret",
@@ -94,7 +107,7 @@ fn post<T: serde::ser::Serialize>(
 
 fn make_jwt(context: &Context, user_id: &uuid) -> jsonwebtoken::errors::Result<String> {
     let claims = Claims {
-        sub: user_id.0.to_string().to_owned(),
+        sub: user_id.0.to_string(),
         hasura: HasuraClaims {
             role: "user".to_string(),
             allowed_roles: vec!["user".to_string()],
@@ -111,11 +124,12 @@ impl Mutation {
         let variables = user_read::Variables { email };
         let request_body = UserRead::build_query(variables);
 
-        let mut res = post(&context, &request_body).unwrap();
+        let mut res = post(&context, &request_body).expect("http failure");
 
-        let response_body: Response<user_read::ResponseData> = res.json().unwrap();
+        let response_body: Response<user_read::ResponseData> =
+            res.json().expect("json decode failure");
 
-        let data = &response_body.data.unwrap();
+        let data = &response_body.data.expect("missing data");
 
         data.user.get(0).map_or(
             Err(FieldError::new(
@@ -123,10 +137,10 @@ impl Mutation {
                 graphql_value!({ "code": "user-not-found" }),
             )),
             |user| {
-                if bcrypt::verify(&password, &user.password).unwrap() {
+                if bcrypt::verify(&password, &user.password).expect("bcrypt failure") {
                     Ok(Auth {
                         id: uuid(user.id.0),
-                        token: make_jwt(&context, &user.id).unwrap(),
+                        token: make_jwt(&context, &user.id).expect("jwt create failure"),
                     })
                 } else {
                     Err(FieldError::new(
@@ -140,44 +154,31 @@ impl Mutation {
     fn signup(context: &Context, email: String, password: String) -> FieldResult<Auth> {
         let variables = user_create::Variables {
             email,
-            password: bcrypt::hash(password, BCRYPT_COST).unwrap(),
+            password: bcrypt::hash(password, BCRYPT_COST).expect("bcrypt failure"),
         };
         let request_body = UserCreate::build_query(variables);
 
-        let mut res = post(&context, &request_body).unwrap();
+        let mut res = post(&context, &request_body).expect("http failure");
 
-        let response_body: Response<user_create::ResponseData> = res.json().unwrap();
-
-        let err = response_body
-            .errors
-            .as_ref()
-            .and_then(|errs| errs.get(0))
-            .map_or(
-                FieldError::new("Could not create user.", juniper::Value::null()),
-                |e| {
-                    let val = e
-                        .extensions
-                        .as_ref()
-                        .and_then(|es| es.get("code"))
-                        .and_then(serde_json::value::Value::as_str)
-                        .map_or(juniper::Value::null(), |c| graphql_value!({ "code": c }));
-                    FieldError::new(&e.message, val)
-                },
-            );
+        let response_body: Response<user_create::ResponseData> =
+            res.json().expect("json decode failure");
 
         let users = response_body
             .data
             .and_then(|data| data.insert_user.map(|insert_user| insert_user.returning));
 
-        users
-            .as_ref()
-            .and_then(|xs| xs.get(0))
-            .map_or(Err(err), |user| {
+        users.as_ref().and_then(|xs| xs.get(0)).map_or(
+            Err(FieldError::new(
+                "Could not create user.",
+                juniper::Value::null(),
+            )),
+            |user| {
                 Ok(Auth {
                     id: uuid(user.id.0),
-                    token: make_jwt(&context, &user.id).unwrap(),
+                    token: make_jwt(&context, &user.id).expect("token creation failure"),
                 })
-            })
+            },
+        )
     }
 }
 
@@ -189,19 +190,28 @@ impl Query {
     }
 }
 
-fn main() {
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .expect("\"PORT\" is missing!");
+async fn graphql(
+    st: web::Data<Arc<Schema>>,
+    ctx: web::Data<Context>,
+    data: web::Json<GraphQLRequest>,
+) -> Result<HttpResponse, Error> {
+    let res = web::block(move || {
+        let res = data.execute(&st, &ctx);
+        Ok::<_, serde_json::error::Error>(serde_json::to_string(&res)?)
+    })
+    .map_err(Error::from)
+    .await?;
 
-    let hasura_endpoint =
-        std::env::var("HASURA_ENDPOINT").expect("\"HASURA_ENDPOINT\" is missing!");
+    Ok(HttpResponse::Ok()
+        .content_type("application/json")
+        .body(res))
+}
 
-    let hasura_admin_secret = std::env::var("ADMIN_SECRET").expect("\"ADMIN_SECRET\" is missing!");
+#[actix_rt::main]
+async fn main() -> std::io::Result<()> {
+    let config = envy::from_env::<Config>().expect("missing environment variables");
 
-    let jwt_str = std::env::var("JWT_SECRET").expect("\"JWT_SECRET\" is missing!");
-    let jwt: JwtSecret = serde_json::from_str(&jwt_str).expect("JWT_SECRET is invalid!");
+    let jwt: JwtSecret = serde_json::from_str(&config.jwt_secret).expect("JWT_SECRET is invalid!");
 
     let algo: jsonwebtoken::Algorithm =
         jsonwebtoken::Algorithm::from_str(&jwt.type_).expect("Invalid JWT algorithm!");
@@ -209,25 +219,22 @@ fn main() {
     let jwt_header = jsonwebtoken::Header::new(algo);
 
     let context = Context {
-        hasura_endpoint,
-        hasura_admin_secret,
+        hasura_endpoint: config.hasura_endpoint,
+        hasura_admin_secret: config.admin_secret,
         jwt_key: jwt.key,
         jwt_header,
+        client: reqwest::Client::new(),
     };
 
-    let graphql_endpoint = GraphQLHandler::new(move |_| Ok(context.clone()), Query, Mutation);
-
-    let mut mount = Mount::new();
-
-    mount.mount("/graphql", graphql_endpoint);
-
-    let mut chain = iron::Chain::new(mount);
-
-    let cors_middleware = CorsMiddleware::with_allow_any();
-
-    chain.link_around(cors_middleware);
-
-    println!("Server listening on port {}!", port);
-
-    iron::Iron::new(chain).http(("0.0.0.0", port)).unwrap();
+    let sch = Schema::new(Query {}, Mutation {});
+    let schema = std::sync::Arc::new(sch);
+    HttpServer::new(move || {
+        App::new()
+            .data(context.clone())
+            .data(schema.clone())
+            .route("/graphql", web::post().to(graphql))
+    })
+    .bind(format!("{}{}", "0.0.0.0:", &config.port.to_string()))?
+    .start()
+    .await
 }
