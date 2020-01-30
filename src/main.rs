@@ -49,7 +49,7 @@ struct Auth {
 pub struct Context {
     hasura_endpoint: String,
     hasura_admin_secret: String,
-    jwt_key: String,
+    jwt_key: jsonwebtoken::EncodingKey,
     jwt_header: jsonwebtoken::Header,
     client: reqwest::Client,
 }
@@ -115,7 +115,7 @@ fn make_jwt(context: &Context, user_id: &uuid) -> jsonwebtoken::errors::Result<S
         },
     };
 
-    jsonwebtoken::encode(&context.jwt_header, &claims, &context.jwt_key.as_ref())
+    jsonwebtoken::encode(&context.jwt_header, &claims, &context.jwt_key)
 }
 
 #[juniper::object(Context = Context)]
@@ -221,7 +221,7 @@ async fn main() -> std::io::Result<()> {
     let context = Context {
         hasura_endpoint: config.hasura_endpoint,
         hasura_admin_secret: config.admin_secret,
-        jwt_key: jwt.key,
+        jwt_key: jsonwebtoken::EncodingKey::from_secret(&jwt.key.as_bytes()),
         jwt_header,
         client: reqwest::Client::new(),
     };
@@ -235,6 +235,6 @@ async fn main() -> std::io::Result<()> {
             .route("/graphql", web::post().to(graphql))
     })
     .bind(format!("{}{}", "0.0.0.0:", &config.port.to_string()))?
-    .start()
+    .run()
     .await
 }
