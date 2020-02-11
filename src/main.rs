@@ -51,7 +51,7 @@ pub struct Context {
     hasura_admin_secret: String,
     jwt_key: jsonwebtoken::EncodingKey,
     jwt_header: jsonwebtoken::Header,
-    client: reqwest::Client,
+    client: reqwest::blocking::Client,
 }
 
 #[derive(serde::Deserialize)]
@@ -93,7 +93,7 @@ pub struct Query;
 fn post<T: serde::ser::Serialize>(
     context: &Context,
     body: T,
-) -> reqwest::Result<reqwest::Response> {
+) -> reqwest::Result<reqwest::blocking::Response> {
     context
         .client
         .post(&context.hasura_endpoint)
@@ -223,7 +223,7 @@ async fn main() -> std::io::Result<()> {
         hasura_admin_secret: config.admin_secret,
         jwt_key: jsonwebtoken::EncodingKey::from_secret(&jwt.key.as_bytes()),
         jwt_header,
-        client: reqwest::Client::new(),
+        client: reqwest::blocking::Client::new(),
     };
 
     let sch = Schema::new(Query {}, Mutation {});
