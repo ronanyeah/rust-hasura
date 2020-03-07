@@ -1,5 +1,5 @@
 use actix_web::{web, App, Error, HttpResponse, HttpServer};
-use futures::future::TryFutureExt;
+use futures::Future;
 use graphql_client::{GraphQLQuery, Response};
 use juniper::http::GraphQLRequest;
 use juniper::RootNode;
@@ -29,7 +29,8 @@ juniper::graphql_scalar!(uuid where Scalar = <S> {
     }
 
     from_input_value(v: &InputValue) -> Option<uuid> {
-        v.as_scalar_value::<String>()
+        v.as_scalar_value()
+            .and_then(|t| t.as_str())
             .and_then(|str| uuid_foo::Uuid::parse_str(str).ok())
             .map(uuid)
     }
@@ -51,7 +52,7 @@ pub struct Context {
     hasura_admin_secret: String,
     jwt_key: jsonwebtoken::EncodingKey,
     jwt_header: jsonwebtoken::Header,
-    client: reqwest::blocking::Client,
+    client: reqwest::Client,
 }
 
 #[derive(serde::Deserialize)]
@@ -93,7 +94,7 @@ pub struct Query;
 fn post<T: serde::ser::Serialize>(
     context: &Context,
     body: T,
-) -> reqwest::Result<reqwest::blocking::Response> {
+) -> impl Future<Output = reqwest::Result<reqwest::Response>> {
     context
         .client
         .post(&context.hasura_endpoint)
@@ -118,16 +119,15 @@ fn make_jwt(context: &Context, user_id: &uuid) -> jsonwebtoken::errors::Result<S
     jsonwebtoken::encode(&context.jwt_header, &claims, &context.jwt_key)
 }
 
-#[juniper::object(Context = Context)]
+#[juniper::graphql_object(Context = Context)]
 impl Mutation {
-    fn login(context: &Context, email: String, password: String) -> FieldResult<Auth> {
+    async fn login(context: &Context, email: String, password: String) -> FieldResult<Auth> {
         let variables = user_read::Variables { email };
         let request_body = UserRead::build_query(variables);
 
-        let mut res = post(&context, &request_body).expect("http failure");
+        let res = post(&context, &request_body).await?;
 
-        let response_body: Response<user_read::ResponseData> =
-            res.json().expect("json decode failure");
+        let response_body: Response<user_read::ResponseData> = res.json().await?;
 
         let data = &response_body.data.expect("missing data");
 
@@ -151,17 +151,16 @@ impl Mutation {
             },
         )
     }
-    fn signup(context: &Context, email: String, password: String) -> FieldResult<Auth> {
+    async fn signup(context: &Context, email: String, password: String) -> FieldResult<Auth> {
         let variables = user_create::Variables {
             email,
             password: bcrypt::hash(password, BCRYPT_COST).expect("bcrypt failure"),
         };
         let request_body = UserCreate::build_query(variables);
 
-        let mut res = post(&context, &request_body).expect("http failure");
+        let res = post(&context, &request_body).await?;
 
-        let response_body: Response<user_create::ResponseData> =
-            res.json().expect("json decode failure");
+        let response_body: Response<user_create::ResponseData> = res.json().await?;
 
         let users = response_body
             .data
@@ -182,7 +181,7 @@ impl Mutation {
     }
 }
 
-#[juniper::object(Context = Context)]
+#[juniper::graphql_object(Context = Context)]
 impl Query {
     // The  GraphQL spec requires a Query field to be defined.
     fn echo(txt: String) -> FieldResult<String> {
@@ -195,16 +194,13 @@ async fn graphql(
     ctx: web::Data<Context>,
     data: web::Json<GraphQLRequest>,
 ) -> Result<HttpResponse, Error> {
-    let res = web::block(move || {
-        let res = data.execute(&st, &ctx);
-        Ok::<_, serde_json::error::Error>(serde_json::to_string(&res)?)
-    })
-    .map_err(Error::from)
-    .await?;
+    let res = data.execute_async(&st, &ctx).await;
+
+    let out = serde_json::to_string(&res).map_err(Error::from)?;
 
     Ok(HttpResponse::Ok()
         .content_type("application/json")
-        .body(res))
+        .body(out))
 }
 
 #[actix_rt::main]
@@ -223,7 +219,7 @@ async fn main() -> std::io::Result<()> {
         hasura_admin_secret: config.admin_secret,
         jwt_key: jsonwebtoken::EncodingKey::from_secret(&jwt.key.as_bytes()),
         jwt_header,
-        client: reqwest::blocking::Client::new(),
+        client: reqwest::Client::new(),
     };
 
     let sch = Schema::new(Query {}, Mutation {});
