@@ -11,17 +11,17 @@ const BCRYPT_COST: u32 = 10;
 
 #[derive(GraphQLQuery)]
 #[graphql(schema_path = "schema.json", query_path = "user-read.graphql")]
-pub struct UserRead;
+struct UserRead;
 
 #[derive(GraphQLQuery)]
 #[graphql(schema_path = "schema.json", query_path = "user-create.graphql")]
-pub struct UserCreate;
+struct UserCreate;
 
 #[allow(non_camel_case_types)]
 #[derive(serde::Deserialize, serde::Serialize, Clone, PartialEq)]
 pub struct uuid(uuid_foo::Uuid);
 
-pub type Schema = RootNode<'static, Query, Mutation>;
+type Schema = RootNode<'static, Query, Mutation, juniper::EmptySubscription<Context>>;
 
 juniper::graphql_scalar!(uuid where Scalar = <S> {
     resolve(&self) -> juniper::Value {
@@ -47,7 +47,7 @@ struct Auth {
 }
 
 #[derive(Clone)]
-pub struct Context {
+struct Context {
     hasura_endpoint: String,
     hasura_admin_secret: String,
     jwt_key: jsonwebtoken::EncodingKey,
@@ -64,7 +64,7 @@ struct Config {
 }
 
 #[derive(serde::Deserialize)]
-pub struct JwtSecret {
+struct JwtSecret {
     #[serde(rename = "type")]
     type_: String,
     key: String,
@@ -87,9 +87,9 @@ struct HasuraClaims {
     user_id: uuid,
 }
 
-pub struct Mutation;
+struct Mutation;
 
-pub struct Query;
+struct Query;
 
 fn post<T: serde::ser::Serialize>(
     context: &Context,
@@ -194,7 +194,7 @@ async fn graphql(
     ctx: web::Data<Context>,
     data: web::Json<GraphQLRequest>,
 ) -> Result<HttpResponse, Error> {
-    let res = data.execute_async(&st, &ctx).await;
+    let res = data.execute(&st, &ctx).await;
 
     let out = serde_json::to_string(&res).map_err(Error::from)?;
 
@@ -222,7 +222,7 @@ async fn main() -> std::io::Result<()> {
         client: reqwest::Client::new(),
     };
 
-    let sch = Schema::new(Query {}, Mutation {});
+    let sch = Schema::new(Query {}, Mutation {}, juniper::EmptySubscription::new());
     let schema = std::sync::Arc::new(sch);
     HttpServer::new(move || {
         App::new()
