@@ -1,6 +1,5 @@
 use actix_web::{web, App, Error, HttpResponse, HttpServer};
-use futures::Future;
-use graphql_client::{GraphQLQuery, Response};
+use graphql_client::GraphQLQuery;
 use juniper::http::GraphQLRequest;
 use juniper::RootNode;
 use juniper::{graphql_value, FieldError, FieldResult};
@@ -18,27 +17,31 @@ struct UserRead;
 struct UserCreate;
 
 #[allow(non_camel_case_types)]
-#[derive(serde::Deserialize, serde::Serialize, Clone, PartialEq)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, PartialEq, Copy)]
 pub struct uuid(uuid_foo::Uuid);
 
 type Schema = RootNode<'static, Query, Mutation, juniper::EmptySubscription<Context>>;
 
-juniper::graphql_scalar!(uuid where Scalar = <S> {
-    resolve(&self) -> juniper::Value {
+#[juniper::graphql_scalar(description = "uuid")]
+impl<S> GraphQLScalar for uuid
+where
+    S: ScalarValue,
+{
+    fn resolve(&self) -> juniper::Value {
         juniper::Value::scalar(self.0.to_string())
     }
 
-    from_input_value(v: &InputValue) -> Option<uuid> {
+    fn from_input_value(v: &InputValue) -> Option<uuid> {
         v.as_scalar_value()
             .and_then(|t| t.as_str())
             .and_then(|str| uuid_foo::Uuid::parse_str(str).ok())
             .map(uuid)
     }
 
-    from_str<'a>(value: ScalarToken<'a>) -> juniper::ParseScalarResult<'a, S> {
+    fn from_str<'a>(value: ScalarToken<'a>) -> juniper::ParseScalarResult<'a, S> {
         <String as juniper::ParseScalarValue<S>>::from_str(value)
     }
-});
+}
 
 #[derive(juniper::GraphQLObject)]
 struct Auth {
@@ -91,22 +94,7 @@ struct Mutation;
 
 struct Query;
 
-fn post<T: serde::ser::Serialize>(
-    context: &Context,
-    body: T,
-) -> impl Future<Output = reqwest::Result<reqwest::Response>> {
-    context
-        .client
-        .post(&context.hasura_endpoint)
-        .header(
-            "x-hasura-admin-secret",
-            context.hasura_admin_secret.as_bytes(),
-        )
-        .json(&body)
-        .send()
-}
-
-fn make_jwt(context: &Context, user_id: &uuid) -> jsonwebtoken::errors::Result<String> {
+fn make_jwt(context: &Context, user_id: &uuid) -> Result<String, juniper::FieldError> {
     let claims = Claims {
         sub: user_id.0.to_string(),
         hasura: HasuraClaims {
@@ -117,75 +105,95 @@ fn make_jwt(context: &Context, user_id: &uuid) -> jsonwebtoken::errors::Result<S
     };
 
     jsonwebtoken::encode(&context.jwt_header, &claims, &context.jwt_key)
+        .map_err(|_| field_error("JWT problem"))
+}
+
+fn field_error(msg: &str) -> juniper::FieldError {
+    FieldError::new(msg, graphql_value!({ "code": 123 }))
+}
+
+async fn post<T: serde::Serialize, D: serde::de::DeserializeOwned>(
+    context: &Context,
+    body: T,
+) -> Result<D, juniper::FieldError> {
+    let res = context
+        .client
+        .post(&context.hasura_endpoint)
+        .header(
+            "x-hasura-admin-secret",
+            context.hasura_admin_secret.as_bytes(),
+        )
+        .json(&body)
+        .send()
+        .await;
+
+    match res {
+        Err(_) => Err(field_error("Request failure")),
+        Ok(data) => {
+            let decode: Result<graphql_client::Response<D>, reqwest::Error> = data.json().await;
+
+            decode
+                .map_err(|_| field_error("JSON decode failure"))
+                .and_then(|gql| {
+                    gql.data
+                        .ok_or_else(|| field_error("Empty data was returned"))
+                })
+        }
+    }
 }
 
 #[juniper::graphql_object(Context = Context)]
 impl Mutation {
-    async fn login(context: &Context, email: String, password: String) -> FieldResult<Auth> {
-        let variables = user_read::Variables { email };
-        let request_body = UserRead::build_query(variables);
-
-        let res = post(&context, &request_body).await?;
-
-        let response_body: Response<user_read::ResponseData> = res.json().await?;
-
-        let data = &response_body.data.expect("missing data");
-
-        data.user.get(0).map_or(
-            Err(FieldError::new(
-                "Email not in use.",
-                graphql_value!({ "code": "user-not-found" }),
-            )),
-            |user| {
-                if bcrypt::verify(&password, &user.password).expect("bcrypt failure") {
-                    Ok(Auth {
-                        id: uuid(user.id.0),
-                        token: make_jwt(&context, &user.id).expect("jwt create failure"),
-                    })
-                } else {
-                    Err(FieldError::new(
-                        "Incorrect password.",
-                        graphql_value!({ "code": "incorrect-password" }),
-                    ))
-                }
-            },
-        )
-    }
     async fn signup(context: &Context, email: String, password: String) -> FieldResult<Auth> {
-        let variables = user_create::Variables {
-            email,
-            password: bcrypt::hash(password, BCRYPT_COST).expect("bcrypt failure"),
-        };
-        let request_body = UserCreate::build_query(variables);
+        match bcrypt::hash(password, BCRYPT_COST) {
+            Err(_) => Err(field_error("Bcrypt problem")),
+            Ok(password) => {
+                let variables = user_create::Variables { email, password };
+                let request_body = UserCreate::build_query(variables);
 
-        let res = post(&context, &request_body).await?;
+                let res: Result<user_create::ResponseData, juniper::FieldError> =
+                    post(&context, &request_body).await;
 
-        let response_body: Response<user_create::ResponseData> = res.json().await?;
-
-        let users = response_body
-            .data
-            .and_then(|data| data.insert_user.map(|insert_user| insert_user.returning));
-
-        users.as_ref().and_then(|xs| xs.get(0)).map_or(
-            Err(FieldError::new(
-                "Could not create user.",
-                juniper::Value::null(),
-            )),
-            |user| {
-                Ok(Auth {
-                    id: uuid(user.id.0),
-                    token: make_jwt(&context, &user.id).expect("token creation failure"),
+                res.and_then(|data| {
+                    data.insert_user
+                        .as_ref()
+                        .and_then(|xs| xs.returning.get(0))
+                        .map_or(Err(field_error("Failed to create user")), |user| {
+                            make_jwt(&context, &user.id).map(|token| Auth { id: user.id, token })
+                        })
                 })
-            },
-        )
+            }
+        }
     }
 }
 
 #[juniper::graphql_object(Context = Context)]
 impl Query {
-    // The  GraphQL spec requires a Query field to be defined.
-    fn echo(txt: String) -> FieldResult<String> {
-        Ok(txt)
+    async fn login(context: &Context, email: String, password: String) -> FieldResult<Auth> {
+        let variables = user_read::Variables { email };
+        let request_body = UserRead::build_query(variables);
+
+        let res: Result<user_read::ResponseData, juniper::FieldError> =
+            post(&context, &request_body).await;
+
+        res.and_then(|data| {
+            data.user
+                .get(0)
+                .map_or(
+                    Err(field_error("Email not in use")),
+                    |user| match bcrypt::verify(&password, &user.password) {
+                        Err(_) => Err(field_error("Bcrypt problem")),
+                        Ok(correct) => {
+                            if correct {
+                                make_jwt(&context, &user.id)
+                                    .map(|token| Auth { id: user.id, token })
+                            } else {
+                                Err(field_error("Incorrect password"))
+                            }
+                        }
+                    },
+                )
+        })
     }
 }
 
