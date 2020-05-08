@@ -3,7 +3,6 @@ use graphql_client::GraphQLQuery;
 use juniper::http::GraphQLRequest;
 use juniper::RootNode;
 use juniper::{graphql_value, FieldError, FieldResult};
-use std::str::FromStr;
 use std::sync::Arc;
 
 const BCRYPT_COST: u32 = 10;
@@ -69,7 +68,7 @@ struct Config {
 #[derive(serde::Deserialize)]
 struct JwtSecret {
     #[serde(rename = "type")]
-    type_: String,
+    type_: jsonwebtoken::Algorithm,
     key: String,
 }
 
@@ -217,10 +216,7 @@ async fn main() -> std::io::Result<()> {
 
     let jwt: JwtSecret = serde_json::from_str(&config.jwt_secret).expect("JWT_SECRET is invalid!");
 
-    let algo: jsonwebtoken::Algorithm =
-        jsonwebtoken::Algorithm::from_str(&jwt.type_).expect("Invalid JWT algorithm!");
-
-    let jwt_header = jsonwebtoken::Header::new(algo);
+    let jwt_header = jsonwebtoken::Header::new(jwt.type_);
 
     let context = Context {
         hasura_endpoint: config.hasura_endpoint,
