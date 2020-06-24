@@ -16,31 +16,9 @@ struct UserRead;
 struct UserCreate;
 
 #[allow(non_camel_case_types)]
-#[derive(serde::Deserialize, serde::Serialize, Clone, PartialEq, Copy)]
-pub struct uuid(uuid_foo::Uuid);
+type uuid = uuid_foo::Uuid;
 
 type Schema = RootNode<'static, Query, Mutation, juniper::EmptySubscription<Context>>;
-
-#[juniper::graphql_scalar(description = "uuid")]
-impl<S> GraphQLScalar for uuid
-where
-    S: ScalarValue,
-{
-    fn resolve(&self) -> juniper::Value {
-        juniper::Value::scalar(self.0.to_string())
-    }
-
-    fn from_input_value(v: &InputValue) -> Option<uuid> {
-        v.as_scalar_value()
-            .and_then(|t| t.as_str())
-            .and_then(|str| uuid_foo::Uuid::parse_str(str).ok())
-            .map(uuid)
-    }
-
-    fn from_str<'a>(value: ScalarToken<'a>) -> juniper::ParseScalarResult<'a, S> {
-        <String as juniper::ParseScalarValue<S>>::from_str(value)
-    }
-}
 
 #[derive(juniper::GraphQLObject)]
 struct Auth {
@@ -74,7 +52,7 @@ struct JwtSecret {
 
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
 struct Claims {
-    sub: String,
+    sub: uuid,
     #[serde(rename = "https://hasura.io/jwt/claims")]
     hasura: HasuraClaims,
 }
@@ -95,7 +73,7 @@ struct Query;
 
 fn make_jwt(context: &Context, user_id: &uuid) -> Result<String, juniper::FieldError> {
     let claims = Claims {
-        sub: user_id.0.to_string(),
+        sub: *user_id,
         hasura: HasuraClaims {
             role: "user".to_string(),
             allowed_roles: vec!["user".to_string()],
@@ -197,17 +175,18 @@ impl Query {
 }
 
 async fn graphql(
-    st: web::Data<Arc<Schema>>,
-    ctx: web::Data<Context>,
+    schema: web::Data<Arc<Schema>>,
+    context: web::Data<Context>,
     data: web::Json<GraphQLRequest>,
 ) -> Result<HttpResponse, Error> {
-    let res = data.execute(&st, &ctx).await;
+    let res = data.execute(&schema, &context).await;
 
-    let out = serde_json::to_string(&res).map_err(Error::from)?;
-
-    Ok(HttpResponse::Ok()
-        .content_type("application/json")
-        .body(out))
+    match serde_json::to_string(&res) {
+        Err(e) => Err(actix_web::Error::from(e)),
+        Ok(out) => Ok(HttpResponse::Ok()
+            .content_type("application/json")
+            .body(out)),
+    }
 }
 
 #[actix_rt::main]
