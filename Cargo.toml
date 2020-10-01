@@ -1,5 +1,5 @@
 [package]
-name = "example"
+name = "rust-hasura"
 version = "0.1.0"
 edition = "2018"
 authors = ["ronanyeah"]
@@ -11,18 +11,17 @@ categories = ["rust"]
 [dependencies]
 juniper = { git = "https://github.com/graphql-rust/juniper" }
 graphql_client = "0.9.0"
-serde = "1.0.110"
-serde_json = "1.0.53"
+serde = "1.0.116"
+serde_json = "1.0.57"
 uuid_foo = { package = "uuid", version = "0.8.1", features = ["serde"] }
-jsonwebtoken = "7.1.0"
-bcrypt = "0.8.0"
-reqwest = { version = "0.10.4", features = ["json"] }
+jsonwebtoken = "7.2.0"
+reqwest = { version = "0.10.8", features = ["json"] }
 futures = "0.3.5"
 envy = "0.4.1"
-actix-web = "3.0.0-alpha.3"
-actix-http = "2.0.0-alpha.4"
+actix-web = "3.0.2"
+actix-http = "2.0.0"
 actix-rt = "1.1.1"
-async-std = "1.6.0"
+async-std = "1.6.5"
 
 [[bin]]
 name = "example"

@@ -1,8 +1,14 @@
 ## Rust + Hasura
 
-This is an example of a [Rust](https://www.rust-lang.org) server that functions as a [remote schema](https://docs.hasura.io/1.0/graphql/manual/remote-schemas/index.html) for [Hasura](https://hasura.io).
+This is an example of a [Rust](https://www.rust-lang.org) server that functions as a [remote schema](https://hasura.io/docs/1.0/graphql/manual/remote-schemas/index.html) for [Hasura](https://hasura.io).
 
-It features login, signup, JWT creation, [hashed](https://docs.rs/bcrypt) passwords and [typesafe](https://docs.rs/graphql_client) requests to Hasura (including integration of Rust's [uuid](https://docs.rs/uuid) package).
+It demonstrates:
+- user login + signup
+- [JWT authorization w/ refresh cookie](https://hasura.io/blog/best-practices-of-using-jwt-with-graphql/)
+- [typesafe GraphQL requests](https://docs.rs/graphql_client)
+- [uuid](https://docs.rs/uuid) package integration
+
+You can learn more about this stack from [this repo](https://github.com/tarbh-engineering/journal) and [this talk](https://www.youtube.com/watch?v=ly05IV5isf4).
 
 
 ## Package Manager
@@ -12,8 +18,8 @@ It features login, signup, JWT creation, [hashed](https://docs.rs/bcrypt) passwo
 
 ## Setup
 
--  Your Hasura schema must have a table `user`, with a column `id` of type `uuid`, and also a column `password` of type `text`.
-- You must also set an [`ADMIN_SECRET`](https://docs.hasura.io/1.0/graphql/manual/deployment/graphql-engine-flags/reference.html) and a [`JWT_SECRET`](https://docs.hasura.io/1.0/graphql/manual/auth/authentication/jwt.html) on the graphql engine, and share these with the Rust server.
+-  Your Hasura schema must have a table `user`, with a `id` column of type `uuid`, and also a `username` column of type `text`.
+- You must also set an [`ADMIN_SECRET`](https://hasura.io/docs/1.0/graphql/manual/deployment/graphql-engine-flags/reference.html) and a [`JWT_SECRET`](https://hasura.io/docs/1.0/graphql/manual/auth/authentication/jwt.html) on the graphql engine, and share these with the Rust server.
 - Use [graphqurl](https://www.npmjs.com/package/graphqurl) to generate `./schema.json`
 - `gq $HASURA_ENDPOINT -H "x-hasura-admin-secret: $ADMIN_SECRET" --introspect --format json > ./schema.json`
 - `cargo run`

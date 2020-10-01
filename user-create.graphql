@@ -1,7 +1,0 @@
-mutation UserCreate($email: String!, $password: String!) {
-  insert_user(objects: [{ password: $password, email: $email }]) {
-    returning {
-      id
-    }
-  }
-}
