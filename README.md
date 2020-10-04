@@ -1,4 +1,4 @@
-## Rust + Hasura
+## Rust + Hasura ![Rust](https://github.com/ronanyeah/rust-hasura/workflows/Rust/badge.svg)
 
 This is an example of a [Rust](https://www.rust-lang.org) server that functions as a [remote schema](https://hasura.io/docs/1.0/graphql/manual/remote-schemas/index.html) for [Hasura](https://hasura.io).
 
