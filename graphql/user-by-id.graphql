@@ -1,5 +1,6 @@
 query UserById($id: uuid!) {
   user_by_pk(id: $id) {
+    id
     username
   }
 }

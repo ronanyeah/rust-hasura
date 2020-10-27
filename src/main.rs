@@ -15,21 +15,19 @@ const HASURA_JWT_LIFE: u64 = 7000;
 
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
-    let config = envy::from_env::<Config>().expect("Missing environment variables!");
+    let env = envy::from_env::<Env>().expect("Missing environment variables!");
 
-    let jwt: JwtSecret = serde_json::from_str(&config.jwt_secret).expect("JWT_SECRET is invalid!");
+    let jwt: JwtSecret = serde_json::from_str(&env.jwt_secret).expect("JWT_SECRET is invalid!");
 
     let jwt_header = jsonwebtoken::Header::new(jwt.type_);
 
-    let context = Context {
-        hasura_endpoint: config.hasura_endpoint,
-        hasura_admin_secret: config.admin_secret,
+    let config = Config {
+        hasura_endpoint: env.hasura_endpoint,
+        hasura_admin_secret: env.admin_secret,
         jwt_enc_key: jsonwebtoken::EncodingKey::from_secret(&jwt.key.as_bytes()),
         jwt_dec_key: jsonwebtoken::DecodingKey::from_secret(&jwt.key.as_bytes()).into_static(),
         jwt_header,
         client: reqwest::Client::new(),
-        cookie_user_id: Arc::new(Mutex::new(None)),
-        cookie_out: Arc::new(Mutex::new(CookieChange::NoChange)),
     };
 
     let schema_ = Schema::new(Query {}, Mutation {}, juniper::EmptySubscription::new());
@@ -37,29 +35,40 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .data(context.clone())
+            .app_data(config.clone())
             .data(schema.clone())
             .route("/graphql", web::post().to(graphql_handler))
     })
-    .bind(format!("{}{}", "0.0.0.0:", &config.port.to_string()))?
+    .bind(("0.0.0.0", env.port))?
     .run()
     .await
 }
 
 async fn graphql_handler(
     schema: web::Data<Arc<Schema>>,
-    context: web::Data<Context>,
     req: HttpRequest,
     gql_req: web::Json<GraphQLRequest>,
 ) -> actix_web::Result<HttpResponse> {
-    let m_cookie = req.cookie(COOKIE_NAME);
+    let config = req.app_data::<Config>().expect("config fail").to_owned();
 
-    if let Some(cookie) = &m_cookie {
-        let maybe_user_id = check_cookie(&context, cookie).await;
+    let maybe_cookie = req.cookie(COOKIE_NAME);
 
-        let arc = context.cookie_user_id.clone();
-        *arc.lock().await = maybe_user_id;
-    }
+    let user_id = if let Some(cookie) = &maybe_cookie {
+        handle_cookie(&config, cookie).await.ok()
+    } else {
+        None
+    };
+
+    let context = Context {
+        hasura_endpoint: config.hasura_endpoint,
+        hasura_admin_secret: config.hasura_admin_secret,
+        jwt_enc_key: config.jwt_enc_key,
+        jwt_dec_key: config.jwt_dec_key,
+        jwt_header: config.jwt_header,
+        client: config.client,
+        cookie_user_id: user_id,
+        cookie_out: Arc::new(Mutex::new(CookieChange::NoChange)),
+    };
 
     let res = gql_req.execute(&schema, &context).await;
 
@@ -82,7 +91,7 @@ async fn graphql_handler(
                 CookieChange::NoChange => Ok(HttpResponse::Ok()
                     .content_type("application/json")
                     .body(out)),
-                CookieChange::Remove => match m_cookie {
+                CookieChange::Remove => match maybe_cookie {
                     None => Ok(HttpResponse::Ok()
                         .content_type("application/json")
                         .body(out)),
@@ -118,11 +127,7 @@ impl Query {
         }
     }
     async fn refresh(context: &Context) -> FieldResult<Option<Auth>> {
-        let arc = context.cookie_user_id.clone();
-
-        let val = arc.lock().await;
-
-        match &*val {
+        match context.cookie_user_id {
             Some(id) => authenticate(&context, &id).map(Some),
             None => Ok(None),
         }
@@ -149,7 +154,8 @@ impl Mutation {
         }
     }
     async fn logout(context: &Context) -> FieldResult<bool> {
-        remove_cookie(context).await;
+        let arc = context.cookie_out.clone();
+        *arc.lock().await = CookieChange::Remove;
         Ok(true)
     }
 }
@@ -190,11 +196,21 @@ enum CookieChange {
 }
 
 #[derive(serde::Deserialize)]
-struct Config {
+struct Env {
     port: u16,
     hasura_endpoint: String,
     admin_secret: String,
     jwt_secret: String,
+}
+
+#[derive(Clone)]
+struct Config {
+    hasura_endpoint: String,
+    hasura_admin_secret: String,
+    jwt_enc_key: jsonwebtoken::EncodingKey,
+    jwt_dec_key: jsonwebtoken::DecodingKey<'static>,
+    jwt_header: jsonwebtoken::Header,
+    client: reqwest::Client,
 }
 
 #[derive(Clone)]
@@ -205,7 +221,7 @@ struct Context {
     jwt_dec_key: jsonwebtoken::DecodingKey<'static>,
     jwt_header: jsonwebtoken::Header,
     client: reqwest::Client,
-    cookie_user_id: Arc<Mutex<Option<uuid>>>,
+    cookie_user_id: Option<uuid>,
     cookie_out: Arc<Mutex<CookieChange>>,
 }
 
@@ -301,11 +317,6 @@ fn field_error(msg: &str) -> juniper::FieldError {
     FieldError::new(msg, graphql_value!({ "code": 123 }))
 }
 
-async fn remove_cookie(context: &Context) {
-    let arc = context.cookie_out.clone();
-    *arc.lock().await = CookieChange::Remove;
-}
-
 fn make_cookie(
     id: &uuid,
     jwt_header: &jsonwebtoken::Header,
@@ -334,10 +345,10 @@ fn seconds_from_now(n: u64) -> u64 {
     since_the_epoch + n
 }
 
-async fn check_cookie(context: &Context, cookie: &Cookie<'static>) -> Option<uuid> {
+async fn handle_cookie(config: &Config, cookie: &Cookie<'static>) -> Result<uuid, String> {
     let cookie_decode = jsonwebtoken::decode::<CookieJwt>(
         cookie.value(),
-        &context.jwt_dec_key,
+        &config.jwt_dec_key,
         &jsonwebtoken::Validation::default(),
     );
 
@@ -345,20 +356,27 @@ async fn check_cookie(context: &Context, cookie: &Cookie<'static>) -> Option<uui
         let variables = user_by_id::Variables { id: ck.claims.sub };
         let request_body = UserById::build_query(variables);
 
-        let res: FieldResult<user_by_id::ResponseData> = post(&context, &request_body).await;
+        let user = config
+            .client
+            .post(&config.hasura_endpoint)
+            .header(
+                "x-hasura-admin-secret",
+                config.hasura_admin_secret.as_bytes(),
+            )
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|_| "User fetch failure")?
+            .json::<graphql_client::Response<user_by_id::ResponseData>>()
+            .await
+            .map_err(|_| "User decode failure")?
+            .data
+            .ok_or("Data not returned")?
+            .user_by_pk
+            .ok_or("User not found")?;
 
-        match res {
-            Ok(data) => match data.user_by_pk {
-                None => {
-                    remove_cookie(&context).await;
-                    None
-                }
-                Some(_) => Some(ck.claims.sub),
-            },
-            Err(_) => None,
-        }
+        Ok(user.id)
     } else {
-        remove_cookie(&context).await;
-        None
+        Err("Bad Cookie".to_owned())
     }
 }
