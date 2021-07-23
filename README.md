@@ -8,7 +8,7 @@ It demonstrates:
 - [typesafe GraphQL requests](https://docs.rs/graphql_client)
 - [uuid](https://docs.rs/uuid) package integration
 
-You can learn more about this stack from [this repo](https://github.com/tarbh-engineering/journal) and [this talk](https://www.youtube.com/watch?v=ly05IV5isf4).
+You can learn more about this stack from [this talk](https://www.youtube.com/watch?v=ly05IV5isf4).
 
 
 ## Package Manager
@@ -19,9 +19,11 @@ You can learn more about this stack from [this repo](https://github.com/tarbh-en
 ## Setup
 
 -  Your Hasura schema must have a table `user`, with a `id` column of type `uuid`, and also a `username` column of type `text`.
-- You must also set an [`ADMIN_SECRET`](https://hasura.io/docs/1.0/graphql/manual/deployment/graphql-engine-flags/reference.html) and a [`JWT_SECRET`](https://hasura.io/docs/1.0/graphql/manual/auth/authentication/jwt.html) on the graphql engine, and share these with the Rust server.
-- Use [graphqurl](https://www.npmjs.com/package/graphqurl) to generate `./schema.json`
-- `gq $HASURA_ENDPOINT -H "x-hasura-admin-secret: $ADMIN_SECRET" --introspect --format json > ./schema.json`
+- Set an [`ADMIN_SECRET`](https://hasura.io/docs/1.0/graphql/manual/deployment/graphql-engine-flags/reference.html) and a [`JWT_SECRET`](https://hasura.io/docs/1.0/graphql/manual/auth/authentication/jwt.html) on the graphql engine, and share these with the Rust server as environment variables.
+- Use [graphqurl](https://www.npmjs.com/package/graphqurl) to generate `schema.json`
+- `gq $HASURA_ENDPOINT -H "x-hasura-admin-secret: $ADMIN_SECRET" --introspect --format json > ./graphql/schema.json`
+
+## Start
 - `cargo run`
 
 
