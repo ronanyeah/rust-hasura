@@ -79,7 +79,7 @@ pub fn new_cookie(id: &crate::graphql::uuid) -> String {
 pub fn remove_cookie() -> String {
     Cookie::build(COOKIE_NAME, "foo")
         .max_age(time::Duration::seconds(0))
-        .expires(time::OffsetDateTime::unix_epoch())
+        .expires(time::OffsetDateTime::UNIX_EPOCH)
         .finish()
         .to_string()
 }
