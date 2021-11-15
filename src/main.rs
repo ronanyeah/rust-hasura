@@ -2,7 +2,6 @@ use async_std::sync::Mutex;
 use graphql_client::GraphQLQuery;
 use juniper::http::GraphQLRequest;
 use juniper::FieldResult;
-use std::convert::Infallible;
 use std::sync::Arc;
 use warp::Filter;
 use warp::Reply;
@@ -76,7 +75,7 @@ async fn graphql_handler(
     schema: Arc<graphql::Schema>,
     cookie: Option<String>,
     gql_req: GraphQLRequest,
-) -> Result<impl warp::Reply, Infallible> {
+) -> Result<impl warp::Reply, warp::Rejection> {
     let user_id = cookie.clone().and_then(|val| helpers::parse_cookie(&val));
 
     let context = types::Context {
