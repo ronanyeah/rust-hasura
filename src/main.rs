@@ -40,8 +40,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let gql = warp::post()
         .and(warp::path("graphql"))
-        .and(with_config(config))
-        .and(with_schema(schema_arc))
+        .and(with_val(config))
+        .and(with_val(schema_arc))
         .and(warp::filters::cookie::optional(helpers::COOKIE_NAME))
         .and(warp::body::json())
         .and_then(graphql_handler);
@@ -53,15 +53,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn with_schema(
-    val: Arc<graphql::Schema>,
-) -> impl Filter<Extract = (Arc<graphql::Schema>,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || val.clone())
-}
-
-fn with_config(
-    val: types::Config,
-) -> impl Filter<Extract = (types::Config,), Error = std::convert::Infallible> + Clone {
+fn with_val<T: Clone + std::marker::Send>(
+    val: T,
+) -> impl Filter<Extract = (T,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || val.clone())
 }
 
